@@ -16,25 +16,15 @@ function findProjectRoot(cwd) {
   return null
 }
 
-function getOwnSrcPath() {
+function getOwnPluginPath() {
   try {
     const binDir = dirname(fileURLToPath(import.meta.url))
-    const candidate = join(binDir, "..", "src", "index.ts")
+    const candidate = join(binDir, "..", "dist", "index.js")
     if (existsSync(candidate)) return candidate
   } catch {
     // ignore
   }
   return null
-}
-
-async function fetchSrc() {
-  try {
-    const res = await fetch("https://raw.githubusercontent.com/brianlan/opencode-loop/main/src/index.ts")
-    if (!res.ok) return null
-    return await res.text()
-  } catch {
-    return null
-  }
 }
 
 async function main() {
@@ -48,7 +38,7 @@ Usage:
   bunx @brianlan/opencode-loop install   Install plugin into current project
   bunx @brianlan/opencode-loop help      Show this help
 
-The install command creates .opencode/plugins/opencode-loop.ts
+The install command creates .opencode/plugins/opencode-loop.js
 so OpenCode can load the plugin automatically.
 `)
     return
@@ -65,26 +55,15 @@ so OpenCode can load the plugin automatically.
     const pluginsDir = join(root, ".opencode", "plugins")
     if (!existsSync(pluginsDir)) mkdirSync(pluginsDir, { recursive: true })
 
-    const dest = join(pluginsDir, "opencode-loop.ts")
+    const dest = join(pluginsDir, "opencode-loop.js")
 
-    let source = null
-    const ownSrc = getOwnSrcPath()
-    if (ownSrc) {
-      try {
-        source = readFileSync(ownSrc, "utf-8")
-      } catch {
-        // fall through
-      }
-    }
-    if (!source) {
-      source = await fetchSrc()
-    }
-    if (!source) {
-      console.error("Could not find plugin source. Please install manually from:")
-      console.error("  https://github.com/brianlan/opencode-loop")
+    const pluginPath = getOwnPluginPath()
+    if (!pluginPath) {
+      console.error("Could not find the bundled plugin in this package.")
       process.exit(1)
     }
 
+    const source = readFileSync(pluginPath, "utf-8")
     writeFileSync(dest, source, "utf-8")
     console.log(`Installed opencode-loop plugin to:\n  ${dest}`)
     console.log(`Restart OpenCode to load the new plugin.`)

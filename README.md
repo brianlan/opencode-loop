@@ -18,6 +18,7 @@ This is by design — perfect for temporary automation within a coding session w
 - **cron_delete** – Remove a loop by name
 
 When a loop triggers, it sends a prompt back into the same OpenCode session, so the AI picks it up in the next loop turn.
+Schedules use standard five-field cron syntax and the OpenCode server's local timezone. The loop keeps the agent that created it.
 
 ## Installation
 
@@ -29,7 +30,7 @@ Run this inside your project directory:
 bunx @brianlan/opencode-loop install
 ```
 
-This creates `.opencode/plugins/opencode-loop.ts` automatically. Restart OpenCode and the plugin is ready.
+This creates `.opencode/plugins/opencode-loop.js` automatically. Restart OpenCode and the plugin is ready.
 
 ### Option B: npm package
 
@@ -49,7 +50,7 @@ Then in `opencode.json`:
 
 ### Option C: manual
 
-Copy `src/index.ts` into `.opencode/plugins/opencode-loop.ts` in your project.
+Copy `dist/index.js` into `.opencode/plugins/opencode-loop.js` in your project.
 
 ## Usage
 
