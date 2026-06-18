@@ -1,0 +1,42 @@
+{
+  "name": "opencode-loop",
+  "version": "0.1.0",
+  "description": "OpenCode plugin to manage cron jobs via system crontab",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bun build src/index.ts --outdir dist --target bun --declaration",
+    "prepublishOnly": "bun run build"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "workspace:*",
+    "typescript": "^5.8.0"
+  },
+  "bin": {
+    "opencode-loop": "bin/install.js"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "cron",
+    "scheduler"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brianlan/opencode-loop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/brianlan/opencode-loop/issues"
+  },
+  "homepage": "https://github.com/brianlan/opencode-loop#readme"
+}
