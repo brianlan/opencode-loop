@@ -17,17 +17,29 @@ function parseField(field: string, min: number, max: number): Set<number> {
       for (let i = min; i <= max; i++) result.add(i)
     } else if (part.includes("/")) {
       const [range, stepStr] = part.split("/")
-      const step = parseInt(stepStr, 10)
-      const start = range === "*" ? min : parseInt(range, 10)
+      const step = parseNumber(stepStr, 1, max - min + 1, `step in "${part}"`)
+      const start = range === "*" ? min : parseNumber(range, min, max, `start in "${part}"`)
       for (let i = start; i <= max; i += step) result.add(i)
     } else if (part.includes("-")) {
-      const [start, end] = part.split("-").map((s) => parseInt(s, 10))
+      const [startStr, endStr] = part.split("-")
+      const start = parseNumber(startStr, min, max, `range start in "${part}"`)
+      const end = parseNumber(endStr, min, max, `range end in "${part}"`)
+      if (start > end) throw new Error(`Invalid descending cron range "${part}"`)
       for (let i = start; i <= end; i++) result.add(i)
     } else {
-      result.add(parseInt(part, 10))
+      result.add(parseNumber(part, min, max, `"${part}"`))
     }
   }
   return result
+}
+
+function parseNumber(value: string, min: number, max: number, label: string) {
+  if (!/^\d+$/.test(value)) throw new Error(`Invalid cron value ${label}`)
+  const number = Number(value)
+  if (number < min || number > max) {
+    throw new Error(`Cron value ${label} must be between ${min} and ${max}`)
+  }
+  return number
 }
 
 function getNextCronDate(schedule: string, from = new Date()): Date {
@@ -107,13 +119,14 @@ function getSessionJobs(sessionID: string): Map<string, CronJob> {
 const CronPlugin: Plugin = async ({ client }) => {
   return {
     event: async ({ event }) => {
-      if (event.type === "session.deleted" && "sessionID" in event) {
-        const sessionJobs = jobsBySession.get(event.sessionID as string)
+      if (event.type === "session.deleted") {
+        const sessionID = event.properties.info.id
+        const sessionJobs = jobsBySession.get(sessionID)
         if (sessionJobs) {
           for (const job of sessionJobs.values()) {
             if (job.timer) clearTimeout(job.timer)
           }
-          jobsBySession.delete(event.sessionID as string)
+          jobsBySession.delete(sessionID)
         }
       }
     },

@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 
-function findProjectRoot(cwd: string): string | null {
+function findProjectRoot(cwd) {
   let dir = resolve(cwd)
   for (let i = 0; i < 10; i++) {
     if (existsSync(join(dir, ".opencode")) || existsSync(join(dir, "opencode.json"))) {
@@ -15,10 +16,9 @@ function findProjectRoot(cwd: string): string | null {
   return null
 }
 
-function getOwnSrcPath(): string | null {
+function getOwnSrcPath() {
   try {
-    // ESM: import.meta.url points to this file (bin/install.js)
-    const binDir = dirname(new URL(import.meta.url).pathname)
+    const binDir = dirname(fileURLToPath(import.meta.url))
     const candidate = join(binDir, "..", "src", "index.ts")
     if (existsSync(candidate)) return candidate
   } catch {
@@ -27,7 +27,7 @@ function getOwnSrcPath(): string | null {
   return null
 }
 
-async function fetchSrc(): Promise<string | null> {
+async function fetchSrc() {
   try {
     const res = await fetch("https://raw.githubusercontent.com/brianlan/opencode-loop/main/src/index.ts")
     if (!res.ok) return null
@@ -45,8 +45,8 @@ async function main() {
     console.log(`opencode-loop installer
 
 Usage:
-  bunx opencode-loop install         Install plugin into current project
-  bunx opencode-loop help            Show this help
+  bunx @brianlan/opencode-loop install   Install plugin into current project
+  bunx @brianlan/opencode-loop help      Show this help
 
 The install command creates .opencode/plugins/opencode-loop.ts
 so OpenCode can load the plugin automatically.
@@ -67,7 +67,7 @@ so OpenCode can load the plugin automatically.
 
     const dest = join(pluginsDir, "opencode-loop.ts")
 
-    let source: string | null = null
+    let source = null
     const ownSrc = getOwnSrcPath()
     if (ownSrc) {
       try {

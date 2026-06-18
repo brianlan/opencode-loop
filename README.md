@@ -26,7 +26,7 @@ When a loop triggers, it sends a prompt back into the same OpenCode session, so 
 Run this inside your project directory:
 
 ```bash
-bunx opencode-loop install
+bunx @brianlan/opencode-loop install
 ```
 
 This creates `.opencode/plugins/opencode-loop.ts` automatically. Restart OpenCode and the plugin is ready.
@@ -34,19 +34,16 @@ This creates `.opencode/plugins/opencode-loop.ts` automatically. Restart OpenCod
 ### Option B: npm package
 
 ```bash
-bun add -d opencode-loop
-# or: npm install -D opencode-loop
+bun add -d @brianlan/opencode-loop
+# or: npm install -D @brianlan/opencode-loop
 ```
 
 Then in `opencode.json`:
 
 ```json
 {
-  "plugins": {
-    "opencode-loop": {
-      "enabled": true
-    }
-  }
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@brianlan/opencode-loop"]
 }
 ```
 

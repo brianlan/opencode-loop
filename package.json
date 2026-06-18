@@ -1,22 +1,30 @@
 {
   "name": "@brianlan/opencode-loop",
-  "version": "0.1.0",
-  "description": "OpenCode plugin to manage cron jobs via system crontab",
+  "version": "0.1.2",
+  "description": "OpenCode plugin for session-scoped recurring loops",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
     "bin",
+    "src",
     "README.md"
   ],
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun --declaration"
+    "build": "bun build src/index.ts --outdir dist --target bun --declaration --external @opencode-ai/plugin",
+    "prepack": "bun run build"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
   },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@opencode-ai/plugin": "^1.17.8",
     "typescript": "^5.8.0"
   },
   "bin": {
