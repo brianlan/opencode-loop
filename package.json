@@ -1,5 +1,5 @@
 {
-  "name": "opencode-loop",
+  "name": "@brianlan/opencode-loop",
   "version": "0.1.0",
   "description": "OpenCode plugin to manage cron jobs via system crontab",
   "type": "module",
@@ -11,8 +11,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun --declaration",
-    "prepublishOnly": "bun run build"
+    "build": "bun build src/index.ts --outdir dist --target bun --declaration"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "*"
