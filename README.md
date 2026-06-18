@@ -1,14 +1,23 @@
 # opencode-loop
 
-An [OpenCode](https://opencode.ai) plugin that lets you create, list, and delete system cron jobs through AI conversation.
+An [OpenCode](https://opencode.ai) plugin that lets you create, list, and delete **session-scoped recurring loops** (like cron jobs, but temporary).
+
+## Key difference from system cron
+
+These loops live **only in memory**. They automatically disappear when:
+
+- The OpenCode TUI / process exits
+- The session is deleted
+
+This is by design — perfect for temporary automation within a coding session without leaving background tasks behind.
 
 ## Features
 
-- **cron_create** – Add a cron job using standard 5-field syntax
-- **cron_list** – View all managed cron jobs
-- **cron_delete** – Remove a cron job by name
+- **cron_create** – Add a recurring loop using standard 5-field cron syntax
+- **cron_list** – View loops in the current session
+- **cron_delete** – Remove a loop by name
 
-All cron jobs are stored in the system crontab (via `crontab -e`), so they survive OpenCode restarts and run even when OpenCode is not active.
+When a loop triggers, it sends a prompt back into the same OpenCode session, so the AI picks it up in the next loop turn.
 
 ## Installation
 
@@ -23,8 +32,6 @@ bunx opencode-loop install
 This creates `.opencode/plugins/opencode-loop.ts` automatically. Restart OpenCode and the plugin is ready.
 
 ### Option B: npm package
-
-Add the package to your project and reference it in `opencode.json`:
 
 ```bash
 bun add -d opencode-loop
@@ -51,13 +58,25 @@ Copy `src/index.ts` into `.opencode/plugins/opencode-loop.ts` in your project.
 
 Once installed, just ask OpenCode:
 
-- "Create a daily backup cron job at 2 AM that runs `tar czf backup.tar.gz ./src`"
-- "List all my cron jobs"
-- "Delete the backup cron job"
+- "Create a loop called `healthcheck` that runs every 5 minutes and tells me to run the test suite"
+- "List my loops"
+- "Delete the healthcheck loop"
+
+Example behind the scenes:
+```
+cron_create(name="healthcheck", schedule="*/5 * * * *", command="Run the test suite and report any failures")
+```
+
+Every 5 minutes, the plugin injects a prompt into the current session:
+```
+[Scheduled loop triggered] "healthcheck": Run the test suite and report any failures
+```
+
+The AI then acts on it just like a normal user message.
 
 ## Permissions
 
-This plugin inherits the current OpenCode agent's permissions. When the AI calls `cron_create` or `cron_delete`, OpenCode will ask for approval according to your agent rules, unless you have configured auto-allow.
+This plugin inherits the current agent's permission rules. It does not add any new permission surfaces — when the AI acts on a triggered prompt, it goes through the normal OpenCode tool-approval flow.
 
 ## License
 

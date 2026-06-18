@@ -1,136 +1,185 @@
 import { type Plugin, tool } from "@opencode-ai/plugin"
 
-const TAG_PREFIX = "@opencode-cron:"
-
-function tagFor(name: string): string {
-  return `# ${TAG_PREFIX}${name}`
-}
-
-async function readCrontab(): Promise<string> {
-  try {
-    const proc = Bun.spawn(["crontab", "-l"], { stdout: "pipe", stderr: "pipe" })
-    const text = await new Response(proc.stdout).text()
-    const exitCode = await proc.exited
-    if (exitCode !== 0) return ""
-    return text
-  } catch {
-    return ""
-  }
-}
-
-async function writeCrontab(content: string): Promise<void> {
-  const proc = Bun.spawn(["crontab", "-"], { stdin: "pipe" })
-  const writer = proc.stdin.getWriter()
-  await writer.write(new TextEncoder().encode(content))
-  await writer.close()
-  const exitCode = await proc.exited
-  if (exitCode !== 0) {
-    throw new Error(`Failed to update crontab (exit code ${exitCode}).`)
-  }
-}
-
 interface CronJob {
   name: string
   schedule: string
   command: string
+  timer: ReturnType<typeof setTimeout> | null
+  nextRun: Date | null
 }
 
-function parseCrontab(content: string): CronJob[] {
-  const jobs: CronJob[] = []
-  const marker = `# ${TAG_PREFIX}`
-  for (const rawLine of content.split("\n")) {
-    const line = rawLine.trimEnd()
-    if (!line || line.startsWith("#")) continue
-    const idx = line.lastIndexOf(marker)
-    if (idx === -1) continue
-    const suffix = line.slice(idx).trim()
-    const match = suffix.match(/^# @opencode-cron:(.+)$/)
-    if (!match) continue
-    const name = match[1]
-    const before = line.slice(0, idx).trim()
-    const parts = before.split(/\s+/)
-    if (parts.length < 6) continue
-    const schedule = parts.slice(0, 5).join(" ")
-    const command = parts.slice(5).join(" ")
-    jobs.push({ name, schedule, command })
+const jobsBySession = new Map<string, Map<string, CronJob>>()
+
+function parseField(field: string, min: number, max: number): Set<number> {
+  const result = new Set<number>()
+  for (const part of field.split(",")) {
+    if (part === "*") {
+      for (let i = min; i <= max; i++) result.add(i)
+    } else if (part.includes("/")) {
+      const [range, stepStr] = part.split("/")
+      const step = parseInt(stepStr, 10)
+      const start = range === "*" ? min : parseInt(range, 10)
+      for (let i = start; i <= max; i += step) result.add(i)
+    } else if (part.includes("-")) {
+      const [start, end] = part.split("-").map((s) => parseInt(s, 10))
+      for (let i = start; i <= end; i++) result.add(i)
+    } else {
+      result.add(parseInt(part, 10))
+    }
   }
-  return jobs
+  return result
 }
 
-function formatLine(job: CronJob): string {
-  return `${job.schedule} ${job.command} ${tagFor(job.name)}`
+function getNextCronDate(schedule: string, from = new Date()): Date {
+  const parts = schedule.trim().split(/\s+/)
+  if (parts.length !== 5) throw new Error("Schedule must have exactly 5 fields: minute hour day month weekday")
+  const [minStr, hrStr, domStr, monStr, dowStr] = parts
+  const mins = parseField(minStr, 0, 59)
+  const hrs = parseField(hrStr, 0, 23)
+  const doms = parseField(domStr, 1, 31)
+  const mons = parseField(monStr, 1, 12)
+  const dows = parseField(dowStr, 0, 6)
+
+  const d = new Date(from)
+  d.setMilliseconds(0)
+  d.setSeconds(0)
+  d.setMinutes(d.getMinutes() + 1)
+
+  for (let i = 0; i < 366 * 24 * 60; i++) {
+    if (
+      mins.has(d.getMinutes()) &&
+      hrs.has(d.getHours()) &&
+      doms.has(d.getDate()) &&
+      mons.has(d.getMonth() + 1) &&
+      dows.has(d.getDay())
+    ) {
+      return new Date(d)
+    }
+    d.setMinutes(d.getMinutes() + 1)
+  }
+  throw new Error("No next execution time found within 1 year")
 }
 
-const CronPlugin: Plugin = async () => {
+function scheduleTick(
+  client: ReturnType<typeof import("@opencode-ai/sdk").createOpencodeClient>,
+  sessionID: string,
+  job: CronJob,
+) {
+  if (job.timer) {
+    clearTimeout(job.timer)
+    job.timer = null
+  }
+
+  try {
+    const next = getNextCronDate(job.schedule)
+    job.nextRun = next
+    const delay = next.getTime() - Date.now()
+
+    job.timer = setTimeout(() => {
+      client.session
+        .prompt({
+          path: { id: sessionID },
+          body: {
+            parts: [
+              {
+                type: "text",
+                text: `[Scheduled loop triggered] "${job.name}": ${job.command}`,
+              },
+            ],
+          },
+        })
+        .catch(() => {})
+
+      scheduleTick(client, sessionID, job)
+    }, Math.max(0, delay))
+  } catch {
+    job.nextRun = null
+  }
+}
+
+function getSessionJobs(sessionID: string): Map<string, CronJob> {
+  if (!jobsBySession.has(sessionID)) {
+    jobsBySession.set(sessionID, new Map())
+  }
+  return jobsBySession.get(sessionID)!
+}
+
+const CronPlugin: Plugin = async ({ client }) => {
   return {
+    event: async ({ event }) => {
+      if (event.type === "session.deleted" && "sessionID" in event) {
+        const sessionJobs = jobsBySession.get(event.sessionID as string)
+        if (sessionJobs) {
+          for (const job of sessionJobs.values()) {
+            if (job.timer) clearTimeout(job.timer)
+          }
+          jobsBySession.delete(event.sessionID as string)
+        }
+      }
+    },
+
     tool: {
       cron_create: tool({
         description:
-          "Create a new system cron job. `schedule` uses standard 5-field cron syntax (minute hour day month weekday). `command` is a shell command executed by /bin/sh -c. Wrap complex commands in single quotes.",
+          "Create a session-scoped recurring loop (cron job). It runs only while this OpenCode session / TUI is alive. `schedule` uses standard 5-field cron syntax (minute hour day month weekday). `command` is the instruction sent to the AI when the loop triggers. Wrap complex instructions in single quotes.",
         args: {
           name: tool.schema.string(),
           schedule: tool.schema.string(),
           command: tool.schema.string(),
         },
-        async execute(args) {
-          const crontab = await readCrontab()
-          const jobs = parseCrontab(crontab)
-          if (jobs.some((j) => j.name === args.name)) {
-            throw new Error(`Cron job "${args.name}" already exists. Use cron_delete first or pick a different name.`)
+        async execute(args, ctx) {
+          const sessionJobs = getSessionJobs(ctx.sessionID)
+          if (sessionJobs.has(args.name)) {
+            throw new Error(`Loop "${args.name}" already exists in this session. Use cron_delete first.`)
           }
+
+          getNextCronDate(args.schedule)
 
           const job: CronJob = {
             name: args.name,
             schedule: args.schedule,
             command: args.command,
+            timer: null,
+            nextRun: null,
           }
 
-          const newLine = formatLine(job)
-          const separator = crontab.endsWith("\n") || crontab.length === 0 ? "" : "\n"
-          const newCrontab = crontab + separator + newLine + "\n"
-          await writeCrontab(newCrontab)
+          sessionJobs.set(args.name, job)
+          scheduleTick(client, ctx.sessionID, job)
 
-          return `Created cron job "${args.name}".\nSchedule: ${args.schedule}\nCommand: ${args.command}`
+          const next = job.nextRun ? job.nextRun.toISOString() : "unknown"
+          return `Created session loop "${args.name}".\nSchedule: ${args.schedule}\nCommand: ${args.command}\nNext run: ${next}`
         },
       }),
 
       cron_list: tool({
-        description: "List all cron jobs managed by this plugin.",
+        description: "List all recurring loops in the current session.",
         args: {},
-        async execute() {
-          const crontab = await readCrontab()
-          const jobs = parseCrontab(crontab)
-          if (jobs.length === 0) return "No managed cron jobs found."
-          return jobs.map((j) => `- ${j.name}: "${j.schedule}" → ${j.command}`).join("\n")
+        async execute(_args, ctx) {
+          const sessionJobs = getSessionJobs(ctx.sessionID)
+          if (sessionJobs.size === 0) return "No loops in this session."
+          return Array.from(sessionJobs.values())
+            .map((j) => {
+              const next = j.nextRun ? j.nextRun.toLocaleString() : "calculating..."
+              return `- ${j.name}: "${j.schedule}" → ${j.command} (next: ${next})`
+            })
+            .join("\n")
         },
       }),
 
       cron_delete: tool({
-        description: "Delete a managed cron job by name.",
+        description: "Delete a recurring loop in the current session by name.",
         args: {
           name: tool.schema.string(),
         },
-        async execute(args) {
-          const crontab = await readCrontab()
-          const lines = crontab.split("\n")
-          const targetTag = tagFor(args.name)
-          let found = false
-          const filtered = lines.filter((rawLine) => {
-            const line = rawLine.trimEnd()
-            if (line.endsWith(targetTag)) {
-              found = true
-              return false
-            }
-            return true
-          })
-
-          if (!found) {
-            throw new Error(`Cron job "${args.name}" not found.`)
+        async execute(args, ctx) {
+          const sessionJobs = getSessionJobs(ctx.sessionID)
+          const job = sessionJobs.get(args.name)
+          if (!job) {
+            throw new Error(`Loop "${args.name}" not found in this session.`)
           }
-
-          const newCrontab = filtered.join("\n")
-          await writeCrontab(newCrontab.endsWith("\n") ? newCrontab : newCrontab + "\n")
-          return `Deleted cron job "${args.name}".`
+          if (job.timer) clearTimeout(job.timer)
+          sessionJobs.delete(args.name)
+          return `Deleted session loop "${args.name}".`
         },
       }),
     },
