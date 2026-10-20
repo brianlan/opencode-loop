@@ -5,15 +5,12 @@ export const MAX_TIMER_DELAY = 2_147_000_000
 type Timer = ReturnType<typeof setTimeout>
 
 type PromptClient = {
-  session: {
-    promptAsync(input: {
-      path: { id: string }
-      body: {
-        agent: string
-        parts: Array<{ type: "text"; text: string }>
-      }
-    }): Promise<{ error?: unknown }>
-  }
+  switchAgent(input: { sessionID: string; agent: string }): Promise<unknown>
+  prompt(input: {
+    sessionID: string
+    text: string
+    delivery: "steer" | "queue"
+  }): Promise<unknown>
 }
 
 type Runtime = {
@@ -190,19 +187,12 @@ export class LoopScheduler {
     job.lastAttempt = this.runtime.now()
 
     try {
-      const result = await this.client.session.promptAsync({
-        path: { id: sessionID },
-        body: {
-          agent: job.agent,
-          parts: [
-            {
-              type: "text",
-              text: `[Scheduled loop triggered at ${scheduledRun.toISOString()}] "${job.name}": ${job.command}`,
-            },
-          ],
-        },
+      await this.client.switchAgent({ sessionID, agent: job.agent })
+      await this.client.prompt({
+        sessionID,
+        text: `[Scheduled loop triggered at ${scheduledRun.toISOString()}] "${job.name}": ${job.command}`,
+        delivery: "queue",
       })
-      if (result.error) throw new Error(formatError(result.error))
       job.lastSuccess = this.runtime.now()
       job.lastError = null
       job.consecutiveFailures = 0

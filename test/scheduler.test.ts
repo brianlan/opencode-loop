@@ -30,15 +30,17 @@ class FakeRuntime {
 }
 
 function client() {
-  const calls: unknown[] = []
+  const calls: Array<[string, unknown]> = []
   return {
     calls,
     value: {
-      session: {
-        async promptAsync(input: unknown) {
-          calls.push(input)
-          return {}
-        },
+      async switchAgent(input: unknown) {
+        calls.push(["switchAgent", input])
+        return {}
+      },
+      async prompt(input: unknown) {
+        calls.push(["prompt", input])
+        return {}
       },
     },
   }
@@ -64,21 +66,18 @@ describe("LoopScheduler", () => {
     runtime.current = new Date("2026-06-18T12:01:00.000Z")
     runtime.timers.at(-1)!.cleared = false
     runtime.nextTimer().callback()
-    await Promise.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(prompt.calls).toEqual([
-      {
-        path: { id: "session-1" },
-        body: {
-          agent: "build",
-          parts: [
-            {
-              type: "text",
-              text: '[Scheduled loop triggered at 2026-06-18T12:01:00.000Z] "echo": Echo LOOP_OK',
-            },
-          ],
+      ["switchAgent", { sessionID: "session-1", agent: "build" }],
+      [
+        "prompt",
+        {
+          sessionID: "session-1",
+          text: '[Scheduled loop triggered at 2026-06-18T12:01:00.000Z] "echo": Echo LOOP_OK',
+          delivery: "queue",
         },
-      },
+      ],
     ])
     expect(scheduler.list("session-1")).toContain("last delivered: 2026-06-18T12:01:00.000Z")
     expect(scheduler.delete("session-1", "echo")).toBe('Deleted session loop "echo".')
@@ -158,14 +157,16 @@ describe("LoopScheduler", () => {
 
   test("reports delivery failures and preserves the creating agent", async () => {
     const runtime = new FakeRuntime("2026-06-18T12:00:30.000Z")
-    const calls: unknown[] = []
+    const calls: Array<[string, unknown]> = []
     const scheduler = new LoopScheduler(
       {
-        session: {
-          async promptAsync(input) {
-            calls.push(input)
-            return { error: { message: "unavailable" } }
-          },
+        async switchAgent(input: unknown) {
+          calls.push(["switchAgent", input])
+          return {}
+        },
+        async prompt(input: unknown) {
+          calls.push(["prompt", input])
+          throw new Error("unavailable")
         },
       },
       runtime,
@@ -180,10 +181,11 @@ describe("LoopScheduler", () => {
     })
     runtime.current = new Date("2026-06-18T12:01:00.000Z")
     runtime.nextTimer().callback()
-    await Promise.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(calls).toHaveLength(1)
-    expect(calls[0]).toMatchObject({ body: { agent: "review" } })
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toEqual(["switchAgent", { sessionID: "session-1", agent: "review" }])
+    expect(scheduler.list("session-1")).toContain("last error: unavailable")
     expect(scheduler.list("session-1")).toContain("consecutive failures: 1")
   })
 
