@@ -5,13 +5,14 @@ export const MAX_TIMER_DELAY = 2_147_000_000
 type Timer = ReturnType<typeof setTimeout>
 
 type SessionClient = {
+  wait(input: { sessionID: string }, options: { signal: AbortSignal }): Promise<void>
   switchAgent(input: { sessionID: string; agent: string }): Promise<unknown>
   prompt(input: {
     sessionID: string
     text: string
-    delivery: "steer" | "queue"
+    delivery: "queue"
   }): Promise<unknown>
-  compact(input: { sessionID: string }): Promise<unknown>
+  compact(input: { sessionID: string; delivery: "queue" }): Promise<unknown>
 }
 
 type Runtime = {
@@ -36,6 +37,13 @@ type LoopJob = {
   cancelled: boolean
 }
 
+type LoopSession = {
+  jobs: Map<string, LoopJob>
+  pending: Map<LoopJob, Date>
+  controller: AbortController
+  draining: boolean
+}
+
 export type CreateLoopInput = {
   sessionID: string
   name: string
@@ -51,7 +59,7 @@ const defaultRuntime: Runtime = {
 }
 
 export class LoopScheduler {
-  private readonly jobsBySession = new Map<string, Map<string, LoopJob>>()
+  private readonly sessions = new Map<string, LoopSession>()
 
   constructor(
     private readonly client: SessionClient,
@@ -59,8 +67,13 @@ export class LoopScheduler {
   ) {}
 
   create(input: CreateLoopInput) {
-    const jobs = this.jobsBySession.get(input.sessionID) ?? new Map<string, LoopJob>()
-    if (jobs.has(input.name)) {
+    const session = this.sessions.get(input.sessionID) ?? {
+      jobs: new Map<string, LoopJob>(),
+      pending: new Map<LoopJob, Date>(),
+      controller: new AbortController(),
+      draining: false,
+    }
+    if (session.jobs.has(input.name)) {
       throw new Error(`Loop "${input.name}" already exists in this session. Use cron_delete first.`)
     }
 
@@ -83,10 +96,10 @@ export class LoopScheduler {
       cancelled: false,
     }
 
-    jobs.set(input.name, job)
-    this.jobsBySession.set(input.sessionID, jobs)
+    session.jobs.set(input.name, job)
+    this.sessions.set(input.sessionID, session)
     this.arm(input.sessionID, job)
-    if (input.runImmediately) void this.deliver(input.sessionID, job, now)
+    if (input.runImmediately) this.request(input.sessionID, job, now)
 
     return [
       `Created session loop "${input.name}".`,
@@ -100,11 +113,13 @@ export class LoopScheduler {
   }
 
   list(sessionID: string) {
-    const jobs = this.jobsBySession.get(sessionID)
-    if (!jobs?.size) return "No loops in this session."
+    const session = this.sessions.get(sessionID)
+    if (!session?.jobs.size) return "No loops in this session."
 
-    return Array.from(jobs.values())
+    return Array.from(session.jobs.values())
       .map((job) => {
+        const pending = session.pending.get(job)
+        const waiting = pending ? `waiting for session idle since ${pending.toISOString()}; ` : ""
         const status = job.lastError
           ? `last error: ${job.lastError}; consecutive failures: ${job.consecutiveFailures}`
           : job.lastSuccess
@@ -112,35 +127,35 @@ export class LoopScheduler {
             : "not triggered yet"
         return [
           `- ${job.name}: "${job.schedule}" → ${job.action.type === "prompt" ? job.action.command : "Compact session"}`,
-          `  ${job.action.type === "prompt" ? `agent: ${job.action.agent}; ` : ""}next: ${job.nextRun.toISOString()}; ${status}`,
+          `  ${job.action.type === "prompt" ? `agent: ${job.action.agent}; ` : ""}next: ${job.nextRun.toISOString()}; ${waiting}${status}`,
         ].join("\n")
       })
       .join("\n")
   }
 
   delete(sessionID: string, name: string) {
-    const jobs = this.jobsBySession.get(sessionID)
-    const job = jobs?.get(name)
-    if (!jobs || !job) throw new Error(`Loop "${name}" not found in this session.`)
+    const session = this.sessions.get(sessionID)
+    const job = session?.jobs.get(name)
+    if (!session || !job) throw new Error(`Loop "${name}" not found in this session.`)
 
     this.cancel(job)
-    jobs.delete(name)
-    if (jobs.size === 0) this.jobsBySession.delete(sessionID)
+    session.pending.delete(job)
+    session.jobs.delete(name)
+    if (session.jobs.size === 0) this.deleteSession(sessionID)
     return `Deleted session loop "${name}".`
   }
 
   deleteSession(sessionID: string) {
-    const jobs = this.jobsBySession.get(sessionID)
-    if (!jobs) return
-    for (const job of jobs.values()) this.cancel(job)
-    this.jobsBySession.delete(sessionID)
+    const session = this.sessions.get(sessionID)
+    if (!session) return
+    for (const job of session.jobs.values()) this.cancel(job)
+    session.pending.clear()
+    session.controller.abort()
+    this.sessions.delete(sessionID)
   }
 
   dispose() {
-    for (const jobs of this.jobsBySession.values()) {
-      for (const job of jobs.values()) this.cancel(job)
-    }
-    this.jobsBySession.clear()
+    for (const sessionID of this.sessions.keys()) this.deleteSession(sessionID)
   }
 
   private cancel(job: LoopJob) {
@@ -184,19 +199,48 @@ export class LoopScheduler {
 
     job.nextRun = nextRun
     this.arm(sessionID, job)
-    void this.deliver(sessionID, job, scheduledRun)
+    this.request(sessionID, job, scheduledRun)
   }
 
-  private async deliver(sessionID: string, job: LoopJob, scheduledRun: Date) {
+  private request(sessionID: string, job: LoopJob, scheduledRun: Date) {
+    if (job.cancelled) return
+    const session = this.sessions.get(sessionID)!
+    if (!session.pending.has(job)) session.pending.set(job, scheduledRun)
+    void this.drain(sessionID, session)
+  }
+
+  private async drain(sessionID: string, session: LoopSession) {
+    if (session.draining) return
+    session.draining = true
+    try {
+      while (session.pending.size && !session.controller.signal.aborted) {
+        const [job, scheduledRun] = session.pending.entries().next().value!
+        await this.deliver(sessionID, session, job, scheduledRun)
+      }
+    } finally {
+      session.draining = false
+    }
+  }
+
+  private async deliver(sessionID: string, session: LoopSession, job: LoopJob, scheduledRun: Date) {
     if (job.cancelled) return
     job.lastAttempt = this.runtime.now()
 
     try {
-      if (job.action.type === "compact") {
-        await this.client.compact({ sessionID })
-      } else {
+      const options = { signal: session.controller.signal }
+      await this.client.wait({ sessionID }, options)
+      if (job.cancelled || options.signal.aborted) return
+      if (job.action.type === "prompt") {
         await this.client.switchAgent({ sessionID, agent: job.action.agent })
-        if (job.cancelled) return
+        if (job.cancelled || options.signal.aborted) return
+        // User work may start while the agent switch is in flight.
+        await this.client.wait({ sessionID }, options)
+        if (job.cancelled || options.signal.aborted) return
+      }
+      session.pending.delete(job)
+      if (job.action.type === "compact") {
+        await this.client.compact({ sessionID, delivery: "queue" })
+      } else {
         await this.client.prompt({
           sessionID,
           text: `[Scheduled loop triggered at ${scheduledRun.toISOString()}] "${job.name}": ${job.action.command}`,
@@ -207,8 +251,12 @@ export class LoopScheduler {
       job.lastError = null
       job.consecutiveFailures = 0
     } catch (error) {
+      if (job.cancelled || session.controller.signal.aborted) return
       job.lastError = formatError(error)
       job.consecutiveFailures++
+    } finally {
+      // A newer trigger may have arrived while the previous request was being submitted.
+      if (session.pending.get(job) === scheduledRun) session.pending.delete(job)
     }
   }
 }

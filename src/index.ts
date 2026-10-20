@@ -17,7 +17,7 @@ const CronPlugin: Plugin.Plugin = {
       editor.add({
         name: "cron_create",
         description:
-          "Create a session-scoped recurring loop. `schedule` uses standard five-field cron syntax (minute hour day month weekday), evaluated in the OpenCode server's local timezone. `command` is sent to the same session when the schedule triggers. `runImmediately` also triggers once on creation; defaults to false.",
+          "Create a session-scoped recurring loop. `schedule` uses standard five-field cron syntax (minute hour day month weekday), evaluated in the OpenCode server's local timezone. `command` is sent only when the session is idle. Repeated triggers while busy are coalesced into one pending run per loop. `runImmediately` makes the loop due on creation but still waits for idle; defaults to false.",
         input: {
           type: "object",
           properties: {
@@ -46,7 +46,7 @@ const CronPlugin: Plugin.Plugin = {
       editor.add({
         name: "cron_compact_create",
         description:
-          "Create a session-scoped recurring compaction loop. `schedule` uses standard five-field cron syntax (minute hour day month weekday), evaluated in the OpenCode server's local timezone. Requests compaction directly without sending a prompt or switching agents. `runImmediately` also requests compaction once on creation; defaults to false. Compaction runs at the next safe point, not necessarily immediately.",
+          "Create a session-scoped recurring compaction loop. `schedule` uses standard five-field cron syntax (minute hour day month weekday), evaluated in the OpenCode server's local timezone. Requests compaction only when the session is idle, without sending a prompt or switching agents. Repeated triggers while busy are coalesced into one pending run per loop. `runImmediately` makes the loop due on creation but still waits for idle; defaults to false. An accepted request does not mean compaction has finished.",
         input: {
           type: "object",
           properties: {
@@ -74,7 +74,7 @@ const CronPlugin: Plugin.Plugin = {
       editor.add({
         name: "cron_list",
         description:
-          "List all recurring prompt and compaction loops in the current session, including next run and request status. A successful compaction request does not mean compaction has finished.",
+          "List all recurring prompt and compaction loops in the current session, including next run, pending idle waits, and request status. A successful compaction request does not mean compaction has finished.",
         input: {
           type: "object",
           properties: {},

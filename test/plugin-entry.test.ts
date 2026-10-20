@@ -16,6 +16,7 @@ test("setup registers the cron tools and cleanup disposes", async () => {
   const calls: Array<[string, unknown]> = []
   const ctx = {
     session: {
+      async wait() {},
       async switchAgent(input: unknown) {
         calls.push(["switchAgent", input])
         return {}
@@ -60,6 +61,7 @@ test("setup registers the cron tools and cleanup disposes", async () => {
     expect(compact.input.properties).not.toHaveProperty("command")
 
     await create.execute({ name: "check", schedule: "46 * * * *", command: "Check status", runImmediately: true }, context)
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(calls.map(([method]) => method)).toEqual(["switchAgent", "prompt"])
 
     const created = await compact.execute({ name: "hourly-compact", schedule: "46 * * * *", runImmediately: false }, context)
@@ -69,7 +71,8 @@ test("setup registers the cron tools and cleanup disposes", async () => {
     expect((await remove.execute({ name: "hourly-compact" }, context)).content).toContain("Deleted session loop")
 
     await compact.execute({ name: "compact-now", schedule: "46 * * * *", runImmediately: true }, context)
-    expect(calls[2]).toEqual(["compact", { sessionID: "session-1" }])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(calls[2]).toEqual(["compact", { sessionID: "session-1", delivery: "queue" }])
     expect(calls).toHaveLength(3)
   } finally {
     await cleanup?.()
