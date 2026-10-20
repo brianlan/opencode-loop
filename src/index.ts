@@ -17,26 +17,55 @@ const CronPlugin: Plugin.Plugin = {
       editor.add({
         name: "cron_create",
         description:
-          "Create a session-scoped recurring loop. `schedule` uses standard five-field cron syntax (minute hour day month weekday), evaluated in the OpenCode server's local timezone. `command` is sent to the same session when the schedule triggers.",
+          "Create a session-scoped recurring loop. `schedule` uses standard five-field cron syntax (minute hour day month weekday), evaluated in the OpenCode server's local timezone. `command` is sent only when the session is idle. Repeated triggers while busy are coalesced into one pending run per loop. `runImmediately` makes the loop due on creation but still waits for idle; defaults to false.",
         input: {
           type: "object",
           properties: {
             name: { type: "string", minLength: 1, maxLength: 100 },
             schedule: { type: "string", minLength: 1 },
             command: { type: "string", minLength: 1 },
+            runImmediately: { type: "boolean", default: false },
           },
           required: ["name", "schedule", "command"],
           additionalProperties: false,
         },
         async execute(input, context) {
-          const args = input as { name: string; schedule: string; command: string }
+          const args = input as { name: string; schedule: string; command: string; runImmediately?: boolean }
           return {
             content: scheduler.create({
               sessionID: context.sessionID,
-              agent: context.agent,
               name: args.name,
               schedule: args.schedule,
-              command: args.command,
+              action: { type: "prompt", command: args.command, agent: context.agent },
+              runImmediately: args.runImmediately,
+            }),
+          }
+        },
+      })
+
+      editor.add({
+        name: "cron_compact_create",
+        description:
+          "Create a session-scoped recurring compaction loop. `schedule` uses standard five-field cron syntax (minute hour day month weekday), evaluated in the OpenCode server's local timezone. Requests compaction only when the session is idle, without sending a prompt or switching agents. Repeated triggers while busy are coalesced into one pending run per loop. `runImmediately` makes the loop due on creation but still waits for idle; defaults to false. An accepted request does not mean compaction has finished.",
+        input: {
+          type: "object",
+          properties: {
+            name: { type: "string", minLength: 1, maxLength: 100 },
+            schedule: { type: "string", minLength: 1 },
+            runImmediately: { type: "boolean", default: false },
+          },
+          required: ["name", "schedule"],
+          additionalProperties: false,
+        },
+        async execute(input, context) {
+          const args = input as { name: string; schedule: string; runImmediately?: boolean }
+          return {
+            content: scheduler.create({
+              sessionID: context.sessionID,
+              name: args.name,
+              schedule: args.schedule,
+              action: { type: "compact" },
+              runImmediately: args.runImmediately,
             }),
           }
         },
@@ -44,7 +73,8 @@ const CronPlugin: Plugin.Plugin = {
 
       editor.add({
         name: "cron_list",
-        description: "List all recurring loops in the current session, including next run and delivery status.",
+        description:
+          "List all recurring prompt and compaction loops in the current session, including next run, pending idle waits, and request status. A successful compaction request does not mean compaction has finished.",
         input: {
           type: "object",
           properties: {},
