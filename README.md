@@ -2,6 +2,8 @@
 
 An [OpenCode](https://opencode.ai) plugin that lets you create, list, and delete **session-scoped recurring loops** (like cron jobs, but temporary).
 
+Requires OpenCode v2 (tested with 2.1). Use plugin version 0.2.x with OpenCode v1.
+
 ## Key difference from system cron
 
 These loops live **only in memory**. They automatically disappear when:
@@ -44,7 +46,7 @@ Then in `opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@brianlan/opencode-loop"]
+  "plugins": ["@brianlan/opencode-loop"]
 }
 ```
 

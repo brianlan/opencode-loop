@@ -1,6 +1,6 @@
 {
   "name": "@brianlan/opencode-loop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "OpenCode plugin for session-scoped recurring loops",
   "type": "module",
   "main": "dist/index.js",
@@ -12,20 +12,12 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bun build src/index.ts --outdir dist --target bun --declaration",
+    "build": "bun build src/index.ts --outdir dist --target bun && tsc --emitDeclarationOnly",
     "test": "bun test",
     "prepack": "bun run build"
   },
-  "peerDependencies": {
-    "@opencode-ai/plugin": "*"
-  },
-  "peerDependenciesMeta": {
-    "@opencode-ai/plugin": {
-      "optional": true
-    }
-  },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.17.8",
+    "@opencode/plugin": "^2.1.0",
     "typescript": "^5.8.0"
   },
   "dependencies": {
