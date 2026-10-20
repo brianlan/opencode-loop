@@ -8,19 +8,21 @@ Requires OpenCode v2 (tested with 2.1). Use plugin version 0.2.x with OpenCode v
 
 These loops live **only in memory**. They automatically disappear when:
 
-- The OpenCode TUI / process exits
+- The plugin unloads or the OpenCode server process exits
 - The session is deleted
 
-This is by design — perfect for temporary automation within a coding session without leaving background tasks behind.
+This is by design — temporary automation without installing persistent system cron jobs.
+With V2's shared background service, closing the TUI alone does not necessarily stop loops. Use `cron_delete` to stop them explicitly.
 
 ## Features
 
 - **cron_create** – Add a recurring loop using standard 5-field cron syntax
+- **cron_compact_create** – Schedule compaction of the current session
 - **cron_list** – View loops in the current session
 - **cron_delete** – Remove a loop by name
 
-When a loop triggers, it sends a prompt back into the same OpenCode session, so the AI picks it up in the next loop turn.
-Schedules use standard five-field cron syntax and the OpenCode server's local timezone. The loop keeps the agent that created it.
+When a prompt loop triggers, it sends a prompt back into the same OpenCode session, so the AI picks it up in the next loop turn.
+Schedules use standard five-field cron syntax and the OpenCode server's local timezone. Prompt loops keep the agent that created them; compaction loops use the current session without switching agents.
 
 ## Installation
 
@@ -74,9 +76,25 @@ Every 5 minutes, the plugin injects a prompt into the current session:
 
 The AI then acts on it just like a normal user message.
 
+### Scheduled compaction
+
+```js
+cron_compact_create({
+  name: "hourly-compact",
+  schedule: "46 * * * *",
+  runImmediately: false,
+})
+```
+
+This requests compaction every hour at minute 46 through OpenCode V2's session compaction interface, without sending a prompt. OpenCode processes the request at the next safe point; a successful request does not mean the summary has finished. Compaction is lossy and uses the session's current model, which may incur model usage costs.
+
+Both creation tools accept optional `runImmediately` (default: `false`). Set it to `true` to request one extra run on creation without changing the cron schedule. Requests run asynchronously; check `cron_list` for request failures. A failed immediate request leaves the loop scheduled for future runs.
+
+Prompt and compaction loops share names within each session. Use `cron_list` to view either kind and `cron_delete` to remove either kind. Deletion and plugin cleanup stop future triggers, not requests already submitted to OpenCode.
+
 ## Permissions
 
-This plugin inherits the current agent's permission rules. It does not add any new permission surfaces — when the AI acts on a triggered prompt, it goes through the normal OpenCode tool-approval flow.
+When the AI acts on a triggered prompt, it inherits the creating agent's permission rules and goes through the normal OpenCode tool-approval flow. Compaction loops request compaction directly rather than asking the AI to run a tool.
 
 ## License
 

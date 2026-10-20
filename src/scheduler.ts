@@ -4,13 +4,14 @@ export const MAX_TIMER_DELAY = 2_147_000_000
 
 type Timer = ReturnType<typeof setTimeout>
 
-type PromptClient = {
+type SessionClient = {
   switchAgent(input: { sessionID: string; agent: string }): Promise<unknown>
   prompt(input: {
     sessionID: string
     text: string
     delivery: "steer" | "queue"
   }): Promise<unknown>
+  compact(input: { sessionID: string }): Promise<unknown>
 }
 
 type Runtime = {
@@ -19,11 +20,12 @@ type Runtime = {
   clearTimer(timer: Timer): void
 }
 
+type LoopAction = { type: "prompt"; command: string; agent: string } | { type: "compact" }
+
 type LoopJob = {
   name: string
   schedule: string
-  command: string
-  agent: string
+  action: LoopAction
   cron: Cron
   timer: Timer | null
   nextRun: Date
@@ -36,10 +38,10 @@ type LoopJob = {
 
 export type CreateLoopInput = {
   sessionID: string
-  agent: string
   name: string
   schedule: string
-  command: string
+  action: LoopAction
+  runImmediately?: boolean
 }
 
 const defaultRuntime: Runtime = {
@@ -52,7 +54,7 @@ export class LoopScheduler {
   private readonly jobsBySession = new Map<string, Map<string, LoopJob>>()
 
   constructor(
-    private readonly client: PromptClient,
+    private readonly client: SessionClient,
     private readonly runtime: Runtime = defaultRuntime,
   ) {}
 
@@ -63,14 +65,14 @@ export class LoopScheduler {
     }
 
     const cron = createCron(input.schedule)
-    const nextRun = cron.nextRun(this.runtime.now())
+    const now = this.runtime.now()
+    const nextRun = cron.nextRun(now)
     if (!nextRun) throw new Error(`Schedule "${input.schedule}" has no future execution time.`)
 
     const job: LoopJob = {
       name: input.name,
       schedule: input.schedule,
-      command: input.command,
-      agent: input.agent,
+      action: { ...input.action },
       cron,
       timer: null,
       nextRun,
@@ -84,12 +86,15 @@ export class LoopScheduler {
     jobs.set(input.name, job)
     this.jobsBySession.set(input.sessionID, jobs)
     this.arm(input.sessionID, job)
+    if (input.runImmediately) void this.deliver(input.sessionID, job, now)
 
     return [
       `Created session loop "${input.name}".`,
       `Schedule: ${input.schedule}`,
-      `Command: ${input.command}`,
-      `Agent: ${input.agent}`,
+      ...(job.action.type === "prompt"
+        ? [`Command: ${job.action.command}`, `Agent: ${job.action.agent}`]
+        : ["Action: Compact session"]),
+      ...(input.runImmediately ? ["Immediate run requested."] : []),
       `Next run: ${nextRun.toISOString()}`,
     ].join("\n")
   }
@@ -103,11 +108,11 @@ export class LoopScheduler {
         const status = job.lastError
           ? `last error: ${job.lastError}; consecutive failures: ${job.consecutiveFailures}`
           : job.lastSuccess
-            ? `last delivered: ${job.lastSuccess.toISOString()}`
+            ? `${job.action.type === "compact" ? "last compaction requested" : "last delivered"}: ${job.lastSuccess.toISOString()}`
             : "not triggered yet"
         return [
-          `- ${job.name}: "${job.schedule}" → ${job.command}`,
-          `  agent: ${job.agent}; next: ${job.nextRun.toISOString()}; ${status}`,
+          `- ${job.name}: "${job.schedule}" → ${job.action.type === "prompt" ? job.action.command : "Compact session"}`,
+          `  ${job.action.type === "prompt" ? `agent: ${job.action.agent}; ` : ""}next: ${job.nextRun.toISOString()}; ${status}`,
         ].join("\n")
       })
       .join("\n")
@@ -187,12 +192,17 @@ export class LoopScheduler {
     job.lastAttempt = this.runtime.now()
 
     try {
-      await this.client.switchAgent({ sessionID, agent: job.agent })
-      await this.client.prompt({
-        sessionID,
-        text: `[Scheduled loop triggered at ${scheduledRun.toISOString()}] "${job.name}": ${job.command}`,
-        delivery: "queue",
-      })
+      if (job.action.type === "compact") {
+        await this.client.compact({ sessionID })
+      } else {
+        await this.client.switchAgent({ sessionID, agent: job.action.agent })
+        if (job.cancelled) return
+        await this.client.prompt({
+          sessionID,
+          text: `[Scheduled loop triggered at ${scheduledRun.toISOString()}] "${job.name}": ${job.action.command}`,
+          delivery: "queue",
+        })
+      }
       job.lastSuccess = this.runtime.now()
       job.lastError = null
       job.consecutiveFailures = 0
